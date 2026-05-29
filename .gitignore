@@ -1,0 +1,24 @@
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+*.sublime-*
+
+# Logs
+*.log
+npm-debug.log*
+
+# Node modules (если будут добавлены)
+node_modules/
+package-lock.json
+
+# OS temp
+.Spotlight-V100/
+.Trashes/
