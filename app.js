@@ -33,37 +33,61 @@ function readExcel(file) {
 
 /**
  * Парсит файл остатков из 1С
- * Ищет строки с названием склада, потом строки данных с артикулом и остатком
+ * Структура: названия складов в отдельных строках, потом данные товаров
  */
 function parseStock(workbook) {
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
   
   let currentSklad = '';
+  let headerIdx = -1;
   const result = [];
   
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
-    if (!row || row.length < 3) continue;
+    if (!row || row.length < 2) continue;
     
-    // Строка склада: название в col[0], col[1] пусто, col[2] пусто
-    if (row[0] && !row[1] && !row[2]) {
-      currentSklad = row[0].toString().trim();
+    const col0 = String(row[0]).trim();
+    
+    // Ищем строку с заголовками (где есть "Артикул")
+    if (col0.includes('Артикул') && row[1]) {
+      headerIdx = i;
       continue;
     }
     
-    // Строка с данными: col[0] - артикул/код, col[2] - наименование, col[15] - остаток
-    const code = row[0] ? String(row[0]).trim() : '';
-    const fullName = row[2] ? String(row[2]).trim() : '';
-    const stock = row[15] ? parseFloat(row[15]) : 0;
-    
-    if (code && fullName && currentSklad) {
-      result.push({
-        Склад: currentSklad,
-        Наименование_raw: fullName,
-        Код: code,
-        Остаток_ролики: stock
-      });
+    // После заголовков ищем названия складов и данные
+    if (i > 6) {
+      // Строка названия склада: в col[0] название (но col[1] не пусто или есть данные ниже)
+      // Проверяем, похожа ли строка на название склада: col[0] заполнен, col[1] пусто
+      if (row[0] && !row[1] && !row[2]) {
+        currentSklad = col0;
+        continue;
+      }
+      
+      // Строка данных товара: col[0] - код, col[1] - наименование, последний столбец - остаток
+      const code = row[0] ? String(row[0]).trim() : '';
+      const fullName = row[1] ? String(row[1]).trim() : '';
+      
+      if (code && fullName && currentSklad && !code.includes('Артикул')) {
+        // Находим конечный остаток (последний непустой столбец)
+        let stock = 0;
+        for (let j = row.length - 1; j >= 0; j--) {
+          if (row[j]) {
+            const val = parseFloat(row[j]);
+            if (!isNaN(val)) {
+              stock = val;
+              break;
+            }
+          }
+        }
+        
+        result.push({
+          Склад: currentSklad,
+          Наименование_raw: fullName,
+          Код: code,
+          Остаток_ролики: stock
+        });
+      }
     }
   }
   
@@ -79,13 +103,12 @@ function parseSales(workbook) {
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
   
   let headerIdx = -1;
-  const headers = ['Вид номенклатуры', 'Партнер', 'Склад', 'Номенклатура', 'Характеристика'];
   
   // Ищем строку с заголовками
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const rowStr = row.join('|').toLowerCase();
-    if (headers.every(h => rowStr.includes(h.toLowerCase()))) {
+    if (rowStr.includes('склад') && rowStr.includes('номенклатур') && rowStr.includes('количество')) {
       headerIdx = i;
       break;
     }
@@ -96,16 +119,21 @@ function parseSales(workbook) {
   const result = [];
   const headerRow = rows[headerIdx];
   
-  // Найдём индексы столбцов
+  // Найдём индексы столбцов по названиям
   let colSklad = -1, colNom = -1, colChar = -1, colQty = -1, colM2 = -1, colRevenue = -1;
+  
   for (let j = 0; j < headerRow.length; j++) {
     const h = String(headerRow[j]).toLowerCase();
-    if (h.includes('склад')) colSklad = j;
-    else if (h.includes('номенклатур') && !h.includes('вид')) colNom = j;
-    else if (h.includes('характеристик')) colChar = j;
-    else if (h.includes('количество') && !h.includes('м2')) colQty = j;
-    else if (h.includes('м2')) colM2 = j;
-    else if (h.includes('сумм') || h.includes('выручк')) colRevenue = j;
+    if (h.includes('склад') && !colSklad) colSklad = j;
+    else if (h.includes('номенклатур') && !h.includes('вид') && colNom === -1) colNom = j;
+    else if (h.includes('характеристик') && colChar === -1) colChar = j;
+    else if ((h.includes('количество') && !h.includes('м2')) || h.includes('кол-во') && h.includes('ш')) {
+      if (colQty === -1) colQty = j;
+    } else if (h.includes('м2') || (h.includes('кол') && h.includes('м2'))) {
+      if (colM2 === -1) colM2 = j;
+    } else if (h.includes('сумм') || h.includes('выручк') || h.includes('сумма')) {
+      if (colRevenue === -1) colRevenue = j;
+    }
   }
   
   // Парсим данные
